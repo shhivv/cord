@@ -299,7 +299,10 @@ mod tests {
 
     #[test]
     fn test_trigonometric_expressions() {
-        assert_eq!(evaluate("(3 * 4) + sin(45)".to_string()).unwrap(), 12.8509035);
+        assert_eq!(
+            evaluate("(3 * 4) + sin(45)".to_string()).unwrap(),
+            12.8509035
+        );
         assert_eq!(evaluate("cos(0) + (2 * 3)".to_string()).unwrap(), 7.0);
     }
 
