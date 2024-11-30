@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     fs,
-    io::{stdout, Write}, task::Wake,
+    io::{stdout, Write},
 };
 
 use anyhow::{Error, Result};
@@ -15,7 +15,7 @@ pub enum Token {
     LeftParen,
     RightParen,
     Number(f32),
-    Variable(String),
+    Variable(String), // never seen by parser
     Power,
     Ln,
     Log,
@@ -24,6 +24,62 @@ pub enum Token {
     Tan,
 }
 
+// expr -> term
+// term -> factor (("-" | "+") factor)*; -> expands to factor ( ("-" | "+") factor ( ("-" | "+") factor ( ("-" | "+") factor (... )))
+// factor -> power ( ( "/" | "*") power )*;
+// power -> unary ( "^" unary)*;
+// unary -> ("-" | "+" | "ln") | primary;
+// primary -> Number | "(" expr ")"
+
+#[derive(Debug, Clone)]
+pub enum ParseExpr {
+    Binary(Box<ParseExpr>, Token, Box<ParseExpr>),
+    Unary(Token, Box<ParseExpr>),
+    Value(Token),
+}
+
+impl ParseExpr {
+    fn expr<I>(tokens: I) -> Self
+    where
+        I: Iterator<Item = Token>,
+    {
+        return Self::term(tokens);
+    }
+
+    fn term<I>(tokens: I) -> Self
+    where
+        I: Iterator<Item = Token>,
+    {
+        return Self::Value(Token::Number(3.0));
+    }
+
+    fn eval(&self) -> Result<f32> {
+        Ok(match self {
+            Self::Binary(left, o, right) => match o {
+                Token::Plus => left.eval()? + right.eval()?,
+                Token::Star => left.eval()? * right.eval()?,
+                Token::Slash => left.eval()? / right.eval()?,
+                Token::Minus => left.eval()? - right.eval()?,
+                Token::Power => left.eval()?.powf(right.eval()?),
+                _ => return Err(Error::msg("Invalid binary operand.")),
+            },
+            Self::Unary(o, expr) => match o {
+                Token::Minus => -expr.eval()?,
+                Token::Plus => expr.eval()?,
+                Token::Sin => expr.eval()?.sin(),
+                Token::Cos => expr.eval()?.cos(),
+                Token::Tan => expr.eval()?.tan(),
+                Token::Ln => expr.eval()?.ln(),
+                Token::Log => expr.eval()?.log10(),
+                _ => return Err(Error::msg("Invalid unary operand.")),
+            },
+            Self::Value(token) => match token {
+                Token::Number(n) => *n,
+                _ => return Err(Error::msg("Invalid value")),
+            },
+        })
+    }
+}
 pub fn produce_tokens(expr: String) -> Result<Vec<Token>> {
     use Token::*;
 
@@ -84,29 +140,6 @@ pub fn produce_tokens(expr: String) -> Result<Vec<Token>> {
     Ok(tokens)
 }
 
-// E = T + E
-// E = T - E
-// E = T
-// T = F * T
-// T = F / T
-// T = F
-// F = F^G
-// G = Variable
-// G = Number
-// G = (E)
-// G = ( - | ln | log | sin | cos | tan ) G
-fn parse_tokens(){
-
-}
-
-// parser functions
- fn expression(){
-     return term()
- }
-
-fn term(){
-    let expr = factor();
-}
 fn populate_variables(tokens: Vec<Token>) -> Result<Vec<Token>> {
     let mut map: HashMap<String, f32> = HashMap::new();
     let mut populated = vec![];
@@ -132,9 +165,12 @@ fn populate_variables(tokens: Vec<Token>) -> Result<Vec<Token>> {
     Ok(populated)
 }
 fn evaluate(expr: String) -> Result<()> {
-    let tokens = produce_tokens(expr);
-    let populated = populate_variables(tokens?)?;
+    let tokens = produce_tokens(expr)?;
+    let populated = populate_variables(tokens)?;
     println!("{:?}", populated);
+
+    let result = ParseExpr::expr(populated.into_iter()).eval()?;
+    println!("[Result] {}", result);
     Ok(())
 }
 
