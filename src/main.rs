@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     fs,
     io::{stdout, Write},
+    iter::Peekable,
 };
 
 use anyhow::{Error, Result};
@@ -25,7 +26,7 @@ pub enum Token {
 }
 
 // expr -> term
-// term -> factor (("-" | "+") factor)*; -> expands to factor ( ("-" | "+") factor ( ("-" | "+") factor ( ("-" | "+") factor (... )))
+// term -> factor (("-" | "+") factor)*;
 // factor -> power ( ( "/" | "*") power )*;
 // power -> unary ( "^" unary)*;
 // unary -> ("-" | "+" | "ln") | primary;
@@ -39,18 +40,105 @@ pub enum ParseExpr {
 }
 
 impl ParseExpr {
-    fn expr<I>(tokens: I) -> Self
+    fn expr<I>(tokens: &mut Peekable<I>) -> Result<Self>
     where
         I: Iterator<Item = Token>,
     {
-        return Self::term(tokens);
+        Ok(Self::term(tokens)?)
     }
 
-    fn term<I>(tokens: I) -> Self
+    fn term<I>(tokens: &mut Peekable<I>) -> Result<Self>
     where
         I: Iterator<Item = Token>,
     {
-        return Self::Value(Token::Number(3.0));
+        let mut expr = Self::factor(tokens)?;
+        while let Some(token) = tokens.peek() {
+            if matches!(token, Token::Plus | Token::Minus) {
+                let op = tokens.next();
+                let right = Self::factor(tokens)?;
+                expr = Self::Binary(Box::new(expr), op.unwrap(), Box::new(right))
+            } else {
+                break;
+            }
+        }
+        Ok(expr)
+    }
+
+    fn factor<I>(tokens: &mut Peekable<I>) -> Result<Self>
+    where
+        I: Iterator<Item = Token>,
+    {
+        let mut expr = Self::power(tokens)?;
+        while let Some(token) = tokens.peek() {
+            if matches!(token, Token::Star | Token::Slash) {
+                let op = tokens.next();
+                let right = Self::power(tokens)?;
+                expr = Self::Binary(Box::new(expr), op.unwrap(), Box::new(right))
+            } else {
+                break;
+            }
+        }
+        Ok(expr)
+    }
+    fn power<I>(tokens: &mut Peekable<I>) -> Result<Self>
+    where
+        I: Iterator<Item = Token>,
+    {
+        let mut expr = Self::unary(tokens)?;
+        while let Some(token) = tokens.peek() {
+            if matches!(token, Token::Power) {
+                let op = tokens.next();
+                let right = Self::unary(tokens)?;
+                expr = Self::Binary(Box::new(expr), op.unwrap(), Box::new(right))
+            } else {
+                break;
+            }
+        }
+        Ok(expr)
+    }
+
+    fn unary<I>(tokens: &mut Peekable<I>) -> Result<Self>
+    where
+        I: Iterator<Item = Token>,
+    {
+        if let Some(token) = tokens.peek() {
+            if matches!(
+                token,
+                Token::Minus
+                    | Token::Plus
+                    | Token::Ln
+                    | Token::Log
+                    | Token::Sin
+                    | Token::Cos
+                    | Token::Tan
+            ) {
+                let op = tokens.next();
+                let right = Self::unary(tokens)?;
+                return Ok(Self::Unary(op.unwrap(), Box::new(right)));
+            }
+        }
+        Ok(Self::primary(tokens)?)
+    }
+
+    fn primary<I>(tokens: &mut Peekable<I>) -> Result<Self>
+    where
+        I: Iterator<Item = Token>,
+    {
+        if let Some(token) = tokens.peek() {
+            match token {
+                Token::Number(_) => return Ok(Self::Value(tokens.next().unwrap())),
+                Token::LeftParen => {
+                    tokens.next();
+                    let expr = Self::expr(tokens)?;
+                    if !matches!(tokens.next(), Some(Token::RightParen)) {
+                        return Err(Error::msg("Unclosed bracket"));
+                    }
+                    return Ok(expr);
+                }
+                _ => {}
+            }
+        }
+        Err(Error::msg("parser failed"))
     }
 
     fn eval(&self) -> Result<f32> {
@@ -110,7 +198,7 @@ pub fn produce_tokens(expr: String) -> Result<Vec<Token>> {
             c if c.is_ascii_alphanumeric() => {
                 let mut string = c.to_string();
                 while let Some(n_char) = chars.peek() {
-                    if n_char.is_ascii_alphanumeric() {
+                    if n_char.is_ascii_alphabetic() {
                         string.push(*n_char);
                         chars.next();
                     } else {
@@ -164,14 +252,12 @@ fn populate_variables(tokens: Vec<Token>) -> Result<Vec<Token>> {
 
     Ok(populated)
 }
-fn evaluate(expr: String) -> Result<()> {
+fn evaluate(expr: String) -> Result<f32> {
     let tokens = produce_tokens(expr)?;
     let populated = populate_variables(tokens)?;
-    println!("{:?}", populated);
 
-    let result = ParseExpr::expr(populated.into_iter()).eval()?;
-    println!("[Result] {}", result);
-    Ok(())
+    let result = ParseExpr::expr(&mut populated.into_iter().peekable())?.eval()?;
+    Ok(result)
 }
 
 fn main() -> Result<()> {
@@ -180,7 +266,9 @@ fn main() -> Result<()> {
         let filepath = &args[1];
         if std::path::Path::new(filepath).exists() {
             let contents = fs::read_to_string(filepath)?;
-            evaluate(contents)?;
+            let result = evaluate(contents)?;
+
+            println!("[Result] {}", result);
         } else {
             println!("file does not exist. usage: cord [filename]")
         }
@@ -188,4 +276,36 @@ fn main() -> Result<()> {
         println!("usage: cord [filename]")
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::evaluate;
+    #[test]
+    fn test_complex_arithmetic_expressions() {
+        assert_eq!(evaluate("(3 * 4) + (2 * 5) - 6".to_string()).unwrap(), 16.0);
+        assert_eq!(
+            evaluate("((10 + 5) * 2 - 3) / 4".to_string()).unwrap(),
+            6.75
+        );
+        assert_eq!(evaluate("3 + 4 * 2 / ( 1 - 5 )".to_string()).unwrap(), 1.0);
+    }
+
+    #[test]
+    fn test_nested_expressions() {
+        assert_eq!(evaluate("(2 + 3) * (4 - 1)".to_string()).unwrap(), 15.0);
+        assert_eq!(evaluate("10 + (5 * (3 - 1))".to_string()).unwrap(), 20.0);
+    }
+
+    #[test]
+    fn test_trigonometric_expressions() {
+        assert_eq!(evaluate("(3 * 4) + sin(45)".to_string()).unwrap(), 12.8509035);
+        assert_eq!(evaluate("cos(0) + (2 * 3)".to_string()).unwrap(), 7.0);
+    }
+
+    #[test]
+    fn test_error_cases() {
+        assert!(evaluate("invalid expression".to_string()).is_err());
+        assert!(evaluate("".to_string()).is_err());
+    }
 }
