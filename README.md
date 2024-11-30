@@ -13,5 +13,5 @@ problem.cord
 and run `cord [filename]`
 
 resources:
-- parsing interpreters
+- crafting interpreters
 - [recursive descent parsing](https://www.youtube.com/watch?v=SToUyjAsaFk)
